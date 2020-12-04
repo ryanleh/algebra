@@ -427,6 +427,15 @@ impl<'a, T: CanonicalSerialize + ToOwned> CanonicalSerialize for Cow<'a, T> {
     fn serialize_uncompressed<W: Write>(&self, writer: W) -> Result<(), SerializationError> {
         self.as_ref().serialize_uncompressed(writer)
     }
+
+    #[inline]
+    fn serialize_unchecked<W: Write>(&self, writer: W) -> Result<(), SerializationError> {
+        self.as_ref().serialize_unchecked(writer)
+    }
+
+    fn uncompressed_size(&self) -> usize {
+        self.as_ref().uncompressed_size()
+    }
 }
 
 impl<'a, T> CanonicalDeserialize for Cow<'a, T>
@@ -442,6 +451,13 @@ where
     #[inline]
     fn deserialize_uncompressed<R: Read>(reader: R) -> Result<Self, SerializationError> {
         Ok(Cow::Owned(<T as ToOwned>::Owned::deserialize_uncompressed(
+            reader,
+        )?))
+    }
+
+    #[inline]
+    fn deserialize_unchecked<R: Read>(reader: R) -> Result<Self, SerializationError> {
+        Ok(Cow::Owned(<T as ToOwned>::Owned::deserialize_unchecked(
             reader,
         )?))
     }
@@ -477,6 +493,26 @@ impl<T: CanonicalSerialize> CanonicalSerialize for Option<T> {
 
         Ok(())
     }
+
+    #[inline]
+    fn serialized_size(&self) -> usize {
+        self.is_some().uncompressed_size()
+            + if let Some(item) = self {
+                item.uncompressed_size()
+            } else {
+                0
+            }
+    }
+
+    #[inline]
+    fn serialize_unchecked<W: Write>(&self, mut writer: W) -> Result<(), SerializationError> {
+        self.is_some().serialize_unchecked(&mut writer)?;
+        if let Some(item) = self {
+            item.serialize_unchecked(&mut writer)?;
+        }
+
+        Ok(())
+    }
 }
 
 impl<T: CanonicalDeserialize> CanonicalDeserialize for Option<T> {
@@ -494,9 +530,21 @@ impl<T: CanonicalDeserialize> CanonicalDeserialize for Option<T> {
 
     #[inline]
     fn deserialize_uncompressed<R: Read>(mut reader: R) -> Result<Self, SerializationError> {
-        let is_some = bool::deserialize(&mut reader)?;
+        let is_some = bool::deserialize_uncompressed(&mut reader)?;
         let data = if is_some {
             Some(T::deserialize_uncompressed(&mut reader)?)
+        } else {
+            None
+        };
+
+        Ok(data)
+    }
+
+    #[inline]
+    fn deserialize_unchecked<R: Read>(mut reader: R) -> Result<Self, SerializationError> {
+        let is_some = bool::deserialize_unchecked(&mut reader)?;
+        let data = if is_some {
+            Some(T::deserialize_unchecked(&mut reader)?)
         } else {
             None
         };
@@ -545,6 +593,33 @@ where
             .map(|(k, v)| k.serialized_size() + v.serialized_size())
             .sum::<usize>()
     }
+    
+    fn serialize_uncompressed<W: Write>(&self, mut writer: W) -> Result<(), SerializationError> {
+        let len = self.len() as u64;
+        len.serialize_uncompressed(&mut writer)?;
+        for (k, v) in self.iter() {
+            k.serialize_uncompressed(&mut writer)?;
+            v.serialize_uncompressed(&mut writer)?;
+        }
+        Ok(())
+    }
+
+    fn serialize_unchecked<W: Write>(&self, mut writer: W) -> Result<(), SerializationError> {
+        let len = self.len() as u64;
+        len.serialize_unchecked(&mut writer)?;
+        for (k, v) in self.iter() {
+            k.serialize_unchecked(&mut writer)?;
+            v.serialize_unchecked(&mut writer)?;
+        }
+        Ok(())
+    }
+
+    fn uncompressed_size(&self) -> usize {
+        8 + self
+            .iter()
+            .map(|(k, v)| k.uncompressed_size() + v.uncompressed_size())
+            .sum::<usize>()
+    }
 }
 
 impl<K, V> CanonicalDeserialize for BTreeMap<K, V>
@@ -557,6 +632,24 @@ where
         let mut map = BTreeMap::new();
         for _ in 0..len {
             map.insert(K::deserialize(&mut reader)?, V::deserialize(&mut reader)?);
+        }
+        Ok(map)
+    }
+
+    fn deserialize_uncompressed<R: Read>(mut reader: R) -> Result<Self, SerializationError> {
+        let len = u64::deserialize_uncompressed(&mut reader)?;
+        let mut map = BTreeMap::new();
+        for _ in 0..len {
+            map.insert(K::deserialize_uncompressed(&mut reader)?, V::deserialize_uncompressed(&mut reader)?);
+        }
+        Ok(map)
+    }
+    
+    fn deserialize_unchecked<R: Read>(mut reader: R) -> Result<Self, SerializationError> {
+        let len = u64::deserialize_unchecked(&mut reader)?;
+        let mut map = BTreeMap::new();
+        for _ in 0..len {
+            map.insert(K::deserialize_unchecked(&mut reader)?, V::deserialize_unchecked(&mut reader)?);
         }
         Ok(map)
     }
@@ -578,6 +671,31 @@ impl<T: CanonicalSerialize> CanonicalSerialize for BTreeSet<T> {
             .map(|elem| elem.serialized_size())
             .sum::<usize>()
     }
+
+    fn serialize_uncompressed<W: Write>(&self, mut writer: W) -> Result<(), SerializationError> {
+        let len = self.len() as u64;
+        len.serialize_uncompressed(&mut writer)?;
+        for elem in self.iter() {
+            elem.serialize_uncompressed(&mut writer)?;
+        }
+        Ok(())
+    }
+
+    fn serialize_unchecked<W: Write>(&self, mut writer: W) -> Result<(), SerializationError> {
+        let len = self.len() as u64;
+        len.serialize_unchecked(&mut writer)?;
+        for elem in self.iter() {
+            elem.serialize_unchecked(&mut writer)?;
+        }
+        Ok(())
+    }
+
+    fn uncompressed_size(&self) -> usize {
+        8 + self
+            .iter()
+            .map(|elem| elem.uncompressed_size())
+            .sum::<usize>()
+    }
 }
 
 impl<T: CanonicalDeserialize + Ord> CanonicalDeserialize for BTreeSet<T> {
@@ -586,6 +704,24 @@ impl<T: CanonicalDeserialize + Ord> CanonicalDeserialize for BTreeSet<T> {
         let mut set = BTreeSet::new();
         for _ in 0..len {
             set.insert(T::deserialize(&mut reader)?);
+        }
+        Ok(set)
+    }
+
+    fn deserialize_uncompressed<R: Read>(mut reader: R) -> Result<Self, SerializationError> {
+        let len = u64::deserialize_uncompressed(&mut reader)?;
+        let mut set = BTreeSet::new();
+        for _ in 0..len {
+            set.insert(T::deserialize_uncompressed(&mut reader)?);
+        }
+        Ok(set)
+    }
+
+    fn deserialize_unchecked<R: Read>(mut reader: R) -> Result<Self, SerializationError> {
+        let len = u64::deserialize_unchecked(&mut reader)?;
+        let mut set = BTreeSet::new();
+        for _ in 0..len {
+            set.insert(T::deserialize_unchecked(&mut reader)?);
         }
         Ok(set)
     }
