@@ -495,7 +495,7 @@ impl<T: CanonicalSerialize> CanonicalSerialize for Option<T> {
     }
 
     #[inline]
-    fn serialized_size(&self) -> usize {
+    fn uncompressed_size(&self) -> usize {
         self.is_some().uncompressed_size()
             + if let Some(item) = self {
                 item.uncompressed_size()
